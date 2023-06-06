@@ -1,3 +1,13 @@
+# SV06 Continuous Printing!
+
+(IN DEVELOPMENT, THIS SECTION IS FUTURE DOCS:)
+
+Mostly just a branch of SV06's Marlin code, but supports continuous printing via part ramming and TSC motor driver feedback to sense stuck parts and handle retries.  Simply start a Y home (ex. `G28 Y R0`) starting from the max Y coordinate to trigger a "special" Y homing that will sense ramming a stuck part and pause / retry rams after further cooling.  Every detected bump pauses ramming for 15 minutes until it tries again, with the hope that a cooler part will now bump off.  After an hour of failure the print will be failed and block your continuous print queue until manual intervention.
+
+WARNING!  Ramming your bare extruder head into a stuck part isn't a good idea.  Maybe consider a ram shield (link TODO) and bed slide (link TODO) to safely bump parts without damaging your extruder or jamming your printer with fallen parts.
+
+Below is the original SV06 branch README docs:
+
 # Introduction
 
 Sovol SV06 is a budget printer with compact functions. It adopts the movement structure of polished rod and bearings, thus, no wheels on the printer anymore!

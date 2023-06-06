@@ -1521,7 +1521,7 @@ void prepare_line_to_destination() {
     if (axis == Y_AXIS && fr_mm_s == 0.0) {
       home_fr_mm_s = 10.0;
     }
-    float orig_y = planner.get_axis_position_mm(Y_AXIS);
+    float orig_y = current_position[axis];
 
     if (DEBUGGING(LEVELING)) {
       DEBUG_ECHOPGM("...(", AS_CHAR(AXIS_CHAR(axis)), ", ", distance, ", ");
@@ -1594,30 +1594,35 @@ void prepare_line_to_destination() {
           resume_print_no_unpark();
         }
     }*/
-    if (axis == Y_AXIS) {
-      float cur_y_pos = planner.get_axis_position_mm(axis);
-      float expectedTravelDiff = abs(orig_y - abs(cur_y_pos));
-      // Super special Y coord >= 219 means to check for collisions!
+    // Super special Y coord >= 219 means to check for collisions!
+    if (axis == Y_AXIS && orig_y >= 219) {
+      float cur_y_pos = abs(current_position[axis]);// planner.get_axis_position_mm(axis);
+      //float expectedTravelDiff = orig_y - cur_y_pos;
       // If traveled much less than expected to re-home, must have hit something a ram failed to clear!
-      if (orig_y >= 219 && expectedTravelDiff > 8) {
+      if (cur_y_pos > 10) {
         if (maxRetries <= 0) {
           kill("Ram failed!", "Clear and Restart!", true);
         }
-        // Recover by moving back to origin and replaying
-        abce_pos_t nextTarget = planner.get_axis_positions_mm();
-        nextTarget[Y_AXIS] = 0.0;
-        planner.set_machine_position_mm(nextTarget);
-        nextTarget[Y_AXIS] = 210.0;
-        planner.buffer_segment(nextTarget OPTARG(HAS_DIST_MM_ARG, cart_dist_mm), home_fr_mm_s / 4, active_extruder);
-        
-        // Now wait 15 minutes before trying again!
+
+        // Wait 15 minutes before trying again! Maybe a cooler bed + some ram pressure
+        // on the part will free it?
+        const uint32 delay = 1000 * 5; //1000 * 60 * 15;
         uint32 now = millis();
         planner.synchronize();
         uint32 t = millis();
-        while ((t - now) < (1000 * 60 * 15)) {
+        while ((t - now) < delay) {
           t = millis();
           idle(true);
         }
+
+        // Recover by moving back to origin and replaying
+        abce_pos_t nextTarget = planner.get_axis_positions_mm();
+        nextTarget[Y_AXIS] = 0.0;
+        // Back up about twice as much as you should have to to trade-off between
+        // re-tracking Y position accurately vs grinding the Y axis motor
+        nextTarget[Y_AXIS] = 220.0 - cur_y_pos / 2.0;
+        planner.set_machine_position_mm(nextTarget);
+        planner.buffer_segment(nextTarget OPTARG(HAS_DIST_MM_ARG, cart_dist_mm), home_fr_mm_s / 4, active_extruder);
 
         do_homing_move(axis, distance, fr_mm_s, final_approach, maxRetries-1);
         return;
