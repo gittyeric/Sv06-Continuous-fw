@@ -469,6 +469,26 @@ bool pause_print(const_float_t retract, const xyz_pos_t &park_point, const bool 
   return true;
 }
 
+void pause_print_no_park() {
+  DEBUG_SECTION(pp, "pause_print", true);
+  DEBUG_ECHOLNPGM("... park.x:", park_point.x, " y:", park_point.y, " z:", park_point.z, " unloadlen:", unload_length, " showlcd:", show_lcd DXC_SAY);
+
+  if (did_pause_print) return; // already paused
+
+  #if ENABLED(HOST_ACTION_COMMANDS)
+    #ifdef ACTION_ON_PAUSED
+      host_action_paused();
+    #elif defined(ACTION_ON_PAUSE)
+      host_action_pause();
+    #endif
+  #endif
+
+  TERN_(HOST_PROMPT_SUPPORT, host_prompt_open(PROMPT_INFO, PSTR("Pause"), DISMISS_STR));
+
+  // Indicate that the printer is paused
+  ++did_pause_print;
+}
+
 /**
  * For Paused Print:
  * - Show "Press button (or M108) to resume"
@@ -695,6 +715,40 @@ void resume_print(const_float_t slow_load_length/*=0*/, const_float_t fast_load_
 
   TERN_(HAS_FILAMENT_SENSOR, runout.reset());
 
+  TERN_(HAS_STATUS_MESSAGE, ui.reset_status());
+  TERN_(HAS_LCD_MENU, ui.return_to_status());
+  TERN_(DWIN_CREALITY_LCD_ENHANCED, HMI_ReturnScreen());
+}
+
+void resume_print_no_unpark() {
+  DEBUG_SECTION(rp, "resume_print", true);
+  DEBUG_ECHOLNPGM("... slowlen:", slow_load_length, " fastlen:", fast_load_length, " purgelen:", purge_length, " maxbeep:", max_beep_count, " targetTemp:", targetTemp DXC_SAY);
+
+  /*
+  SERIAL_ECHOLNPGM(
+    "start of resume_print()\ndual_x_carriage_mode:", dual_x_carriage_mode,
+    "\nextruder_duplication_enabled:", extruder_duplication_enabled,
+    "\nactive_extruder:", active_extruder,
+    "\n"
+  );
+  //*/
+
+  if (!did_pause_print) return;
+
+  // Re-enable the heaters if they timed out
+  ui.pause_show_message(PAUSE_MESSAGE_RESUME);
+
+  ui.pause_show_message(PAUSE_MESSAGE_STATUS);
+
+  #ifdef ACTION_ON_RESUMED
+    host_action_resumed();
+  #elif defined(ACTION_ON_RESUME)
+    host_action_resume();
+  #endif
+
+  --did_pause_print;
+
+  TERN_(HOST_PROMPT_SUPPORT, host_prompt_open(PROMPT_INFO, PSTR("Resuming"), DISMISS_STR));
   TERN_(HAS_STATUS_MESSAGE, ui.reset_status());
   TERN_(HAS_LCD_MENU, ui.return_to_status());
   TERN_(DWIN_CREALITY_LCD_ENHANCED, HMI_ReturnScreen());

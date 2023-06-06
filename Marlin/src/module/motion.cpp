@@ -29,6 +29,7 @@
 #include "stepper.h"
 #include "planner.h"
 #include "temperature.h"
+#include "../feature/host_actions.h"
 
 #include "../gcode/gcode.h"
 
@@ -58,6 +59,7 @@
 #if HAS_FILAMENT_SENSOR
   #include "../feature/runout.h"
 #endif
+#include "../feature/pause.h"
 
 #if ENABLED(SENSORLESS_HOMING)
   #include "../feature/tmc_util.h"
@@ -73,6 +75,9 @@
 
 #define DEBUG_OUT ENABLED(DEBUG_LEVELING_FEATURE)
 #include "../core/debug_out.h"
+#include "../core/serial.h"
+
+#include "../lcd/marlinui.h"
 
 // Relative Mode. Enable with G91, disable with G90.
 bool relative_mode; // = false;
@@ -1509,10 +1514,14 @@ void prepare_line_to_destination() {
   /**
    * Home an individual linear axis
    */
-  void do_homing_move(const AxisEnum axis, const float distance, const feedRate_t fr_mm_s=0.0, const bool final_approach=true) {
+  void do_homing_move(const AxisEnum axis, const float distance, const feedRate_t fr_mm_s=0.0, const bool final_approach=true, const uint32_t maxRetries = 4) {
     DEBUG_SECTION(log_move, "do_homing_move", DEBUGGING(LEVELING));
 
-    const feedRate_t home_fr_mm_s = fr_mm_s ?: homing_feedrate(axis);
+    feedRate_t home_fr_mm_s = fr_mm_s ?: homing_feedrate(axis);
+    if (axis == Y_AXIS && fr_mm_s == 0.0) {
+      home_fr_mm_s = 10.0;
+    }
+    float orig_y = planner.get_axis_position_mm(Y_AXIS);
 
     if (DEBUGGING(LEVELING)) {
       DEBUG_ECHOPGM("...(", AS_CHAR(AXIS_CHAR(axis)), ", ", distance, ", ");
@@ -1552,6 +1561,8 @@ void prepare_line_to_destination() {
       TERN_(SENSORLESS_HOMING, stealth_states = start_sensorless_homing_per_axis(axis));
     }
 
+    // Get the ABC or XYZ positions in mm
+    abce_pos_t target = planner.get_axis_positions_mm();
     #if EITHER(MORGAN_SCARA, MP_SCARA)
       // Tell the planner the axis is at 0
       current_position[axis] = 0;
@@ -1559,9 +1570,6 @@ void prepare_line_to_destination() {
       current_position[axis] = distance;
       line_to_current_position(home_fr_mm_s);
     #else
-      // Get the ABC or XYZ positions in mm
-      abce_pos_t target = planner.get_axis_positions_mm();
-
       target[axis] = 0;                         // Set the single homing axis to 0
       planner.set_machine_position_mm(target);  // Update the machine position
 
@@ -1575,6 +1583,46 @@ void prepare_line_to_destination() {
     #endif
 
     planner.synchronize();
+
+    // Re-enable to test prompt-based solution
+    /*if (axis == X_AXIS) {
+        ui.pause_show_message(PAUSE_MESSAGE_RESUME, PAUSE_MODE_PAUSE_PRINT);
+        const bool show_lcd = TERN0(HAS_LCD_MENU, parser.boolval('P'));
+        pause_print_no_park();
+        if (ENABLED(EXTENSIBLE_UI) || BOTH(EMERGENCY_PARSER, HOST_PROMPT_SUPPORT) || show_lcd) {
+          wait_for_confirmation(false, 0);
+          resume_print_no_unpark();
+        }
+    }*/
+    if (axis == Y_AXIS) {
+      float cur_y_pos = planner.get_axis_position_mm(axis);
+      float expectedTravelDiff = abs(orig_y - abs(cur_y_pos));
+      // Super special Y coord >= 219 means to check for collisions!
+      // If traveled much less than expected to re-home, must have hit something a ram failed to clear!
+      if (orig_y >= 219 && expectedTravelDiff > 8) {
+        if (maxRetries <= 0) {
+          kill("Ram failed!", "Clear and Restart!", true);
+        }
+        // Recover by moving back to origin and replaying
+        abce_pos_t nextTarget = planner.get_axis_positions_mm();
+        nextTarget[Y_AXIS] = 0.0;
+        planner.set_machine_position_mm(nextTarget);
+        nextTarget[Y_AXIS] = 210.0;
+        planner.buffer_segment(nextTarget OPTARG(HAS_DIST_MM_ARG, cart_dist_mm), home_fr_mm_s / 4, active_extruder);
+        
+        // Now wait 15 minutes before trying again!
+        uint32 now = millis();
+        planner.synchronize();
+        uint32 t = millis();
+        while ((t - now) < (1000 * 60 * 15)) {
+          t = millis();
+          idle(true);
+        }
+
+        do_homing_move(axis, distance, fr_mm_s, final_approach, maxRetries-1);
+        return;
+      }
+    }
 
     if (is_home_dir) {
 

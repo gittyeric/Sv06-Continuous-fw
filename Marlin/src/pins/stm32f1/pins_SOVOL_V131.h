@@ -32,7 +32,7 @@
   #define BOARD_INFO_NAME      "Sovol V131"
 #endif
 #ifndef DEFAULT_MACHINE_NAME
-  #define DEFAULT_MACHINE_NAME "Sovol SV06"
+  #define DEFAULT_MACHINE_NAME "Sovol SC1.3"
 #endif
 
 //#define BOARD_NO_NATIVE_USB

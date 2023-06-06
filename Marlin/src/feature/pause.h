@@ -100,6 +100,10 @@ void wait_for_confirmation(
   DXC_PARAMS                                                  // Dual-X-Carriage extruder index
 );
 
+void pause_print_no_park(DXC_PARAMS);
+
+void resume_print_no_unpark(DXC_PARAMS);
+
 void resume_print(
   const_float_t   slow_load_length=0,                         // (mm) Slow Load Length for finishing move
   const_float_t   fast_load_length=0,                         // (mm) Fast Load Length for initial move
