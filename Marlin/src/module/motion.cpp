@@ -1517,10 +1517,9 @@ void prepare_line_to_destination() {
   void do_homing_move(const AxisEnum axis, const float distance, const feedRate_t fr_mm_s=0.0, const bool final_approach=true, const uint32_t maxRetries = 4) {
     DEBUG_SECTION(log_move, "do_homing_move", DEBUGGING(LEVELING));
 
-    feedRate_t home_fr_mm_s = fr_mm_s ?: homing_feedrate(axis);
-    if (axis == Y_AXIS && fr_mm_s == 0.0) {
-      home_fr_mm_s = 10.0;
-    }
+    uint32 start_move_time = millis();
+
+    const feedRate_t home_fr_mm_s = fr_mm_s ?: homing_feedrate(axis);
     float orig_y = current_position[axis];
 
     if (DEBUGGING(LEVELING)) {
@@ -1536,6 +1535,9 @@ void prepare_line_to_destination() {
     const int8_t axis_home_dir = TERN0(DUAL_X_CARRIAGE, axis == X_AXIS)
                   ? TOOL_X_HOME_DIR(active_extruder) : home_dir(axis);
     const bool is_home_dir = (axis_home_dir > 0) == (distance > 0);
+
+    // Super special Y coord == Y_MAX_POS means to check for collisions!
+    bool is_ram_mode = axis == Y_AXIS && orig_y >= (Y_MAX_POS - 0.99) && is_home_dir;
 
     #if ENABLED(SENSORLESS_HOMING)
       sensorless_t stealth_states;
@@ -1584,29 +1586,54 @@ void prepare_line_to_destination() {
 
     planner.synchronize();
 
-    // Re-enable to test prompt-based solution
-    /*if (axis == X_AXIS) {
-        ui.pause_show_message(PAUSE_MESSAGE_RESUME, PAUSE_MODE_PAUSE_PRINT);
-        const bool show_lcd = TERN0(HAS_LCD_MENU, parser.boolval('P'));
-        pause_print_no_park();
-        if (ENABLED(EXTENSIBLE_UI) || BOTH(EMERGENCY_PARSER, HOST_PROMPT_SUPPORT) || show_lcd) {
-          wait_for_confirmation(false, 0);
-          resume_print_no_unpark();
-        }
-    }*/
-    // Super special Y coord >= 219 means to check for collisions!
-    if (axis == Y_AXIS && orig_y >= 219) {
-      float cur_y_pos = abs(current_position[axis]);// planner.get_axis_position_mm(axis);
-      //float expectedTravelDiff = orig_y - cur_y_pos;
-      // If traveled much less than expected to re-home, must have hit something a ram failed to clear!
-      if (cur_y_pos > 10) {
+    if (is_ram_mode) {
+      // Calculate how far the homing move traveled before motor kickback signal
+      // based on movement duration since bumped distances aren't really reliable
+      uint32 end_move_time = millis();
+      uint32 move_duration_ms = end_move_time - start_move_time;
+      float expected_move_ms = 1000 * (Y_MAX_POS / home_fr_mm_s) + 350; // +350 compensates for accel/decel
+      float percent_traveled = (move_duration_ms+0.0) / expected_move_ms;
+
+      if (percent_traveled > 1.15) {
+          char msg[64];
+          sprintf(msg, "Ram took %.1f%% too long!", percent_traveled*100);
+          kill(msg, "", true);
+      }
+      // If traveled much less time than expected to re-home, must have hit something a ram failed to clear!
+      else if (percent_traveled < 0.93) {
+        // Disable stall guard mode for repeating later
+        TERN_(SENSORLESS_HOMING, end_sensorless_homing_per_axis(axis, stealth_states));
+
+        // Artificially set current position with calculated current position, but
+        // assume there may be up to 5% error in timing so error on overly smashing Y back to Y_MAX_POS
+        current_position[axis] = Y_MAX_POS - Y_MAX_POS * min(1.0f, (min(percent_traveled, 1.0f) + 0.05f));
+        cartes[axis] = current_position[axis];
+        sync_plan_position();
+
+        // Recover by moving back to origin and replaying
+        abce_pos_t next_target = planner.get_axis_positions_mm();
+        // Back up about twice as much as you should have to to trade-off between
+        // re-tracking Y position accurately vs grinding the Y axis motor
+        next_target[Y_AXIS] = Y_MAX_POS;
+        //planner.set_machine_position_mm(nextTarget);
+        //planner.buffer_line(nextTarget, home_fr_mm_s / 6, active_extruder);
+        planner.buffer_segment(next_target OPTARG(HAS_DIST_MM_ARG, cart_dist_mm), home_fr_mm_s / 6, active_extruder);
+        planner.synchronize();
+
+        // For some reason the sync above isn't enough, hard-set the current Y position
+        // to max
+        current_position[axis] = Y_MAX_POS;
+        cartes[axis] = current_position[axis];
+        sync_plan_position();
+
         if (maxRetries <= 0) {
-          kill("Ram failed!", "Clear and Restart!", true);
+          char msg[64];
+          sprintf(msg, "Ram jam at %.2f%%!", percent_traveled*100);
+          kill(msg, "", true);
         }
 
-        // Wait 15 minutes before trying again! Maybe a cooler bed + some ram pressure
-        // on the part will free it?
-        const uint32 delay = 1000 * 5; //1000 * 60 * 15;
+        // Wait 15 minutes before trying again! Maybe a cooler bed on the part will free it?
+        const uint32 delay = 1000 * 60 * 15;
         uint32 now = millis();
         planner.synchronize();
         uint32 t = millis();
@@ -1614,15 +1641,6 @@ void prepare_line_to_destination() {
           t = millis();
           idle(true);
         }
-
-        // Recover by moving back to origin and replaying
-        abce_pos_t nextTarget = planner.get_axis_positions_mm();
-        nextTarget[Y_AXIS] = 0.0;
-        // Back up about twice as much as you should have to to trade-off between
-        // re-tracking Y position accurately vs grinding the Y axis motor
-        nextTarget[Y_AXIS] = 220.0 - cur_y_pos / 2.0;
-        planner.set_machine_position_mm(nextTarget);
-        planner.buffer_segment(nextTarget OPTARG(HAS_DIST_MM_ARG, cart_dist_mm), home_fr_mm_s / 4, active_extruder);
 
         do_homing_move(axis, distance, fr_mm_s, final_approach, maxRetries-1);
         return;
