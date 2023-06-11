@@ -1,25 +1,25 @@
 # SV06 Continuous Printing Mod!
 
-Mostly just a branch of SV06's Marlin code, but supports continuous printing via part ramming!  This custom Marlin firmware is the main key to safe-ish automated continuous printing with a dependable, cheap printer! This fork uses TSM motor driver feedback to sense when a ram hits a stuck part and handle stopping and retrying.  Simply start a Y home (ex. `G28 Y R0`) starting from the max Y coordinate to trigger a "special" Y homing that will sense ramming a stuck part and pause / retry rams after further cooling.  Every detected bump pauses ramming for 15 minutes until it tries again, with the hope that a cooler part will now bump off.  After an hour of failure the print will be failed and block your continuous print queue until manual intervention.
+Mostly just a branch of SV06's Marlin code, but supports continuous printing via part ramming!  This custom Marlin firmware is at the core of safe-ish automated continuous printing with a dependable, cheap printer! This fork uses TMC motor driver feedback to sense when a ram hits a stuck part and handle stopping and retrying.  Simply start a Y home (ex. `G28 Y R0`) starting from the max Y coordinate to trigger a "special" Y homing that will sense ramming a stuck part and pause / retry rams after further cooling.  After an hour of failed rams the print will be failed and block your continuous print queue until manual intervention.
 
 WARNING!  Ramming your bare extruder head into a stuck part isn't a good idea.  Maybe consider a ram shield (link TODO) and bed slide (link TODO) to safely bump parts without damaging your extruder or jamming your printer with fallen parts.
 
 DISCLAIMER! Nothing here is Sovol-approved, and I'm just a guy who's too lazy to clear his beds between prints.  Depending on your use you may deteriorate or even completely destroy your printer with this firmware over time and that's the risk you're accepting. If you don't like putting your machines at risk with slight hacks you can always buy a proper industrial printer or deal with the hassle of a belt printer!
 
-## Installation
+### New Marlin Feature: Homing Ram
 
-Included in this repo is the custom (Marlin Firmware build)[continuous.bin] you can use to re-flash your SV06.  Take the SD card that came with your printer and remove all files from it (back them up first if you want, but they are available at Sovol's website).  Place (continuous.bin)[continuous.bin] on the SD card, plug into the SV06, unplug the SV06's usb port (if connected), and restart the machine using the physical switch.  If the blank screen doesn't disappear, rename the file on the SD card to anything the printer hasn't seen before and repeat the process until the Sovol logo appears.  The display should now read `Sovol SC 1.x Ready` to indicate it's now a Sovol Continuous!  Running a Y home when the bed is all the way back will now trigger a collision-safe ram that will stop and retry if it detects a collision.
-
-### New Feature: Homing Ram
-
-The post print process relies on the "smart" homing ram, which does the following:
+This firmware implements the "smart" homing ram, which does the following whe a `G28` homing command is issued for the Y axis but only when the bed is positioned all the way to the rear:
 
 1. Ram forward in TMC "stall guard" mode, stopping if a stuck part is hit.
-2. If a stuck part is hit, back all the way back up and try step 1 again, otherwise, proceed as if a normal Y homing succeeded.
+2. If a stuck part is hit, back up all the way, wait 15 minutes and try step 1 again, otherwise proceed as if a normal Y homing succeeded.  If this is the 4th failed attempt to ram, the printer will go into a kill state, preventing any continuous printing software from attempting more prints until manual intervention can safely clear and reset the printer.
+
+## Installation
+
+Included in this repo is the custom [Marlin Firmware build](continuous.bin) you can use to re-flash your SV06.  Take the SD card that came with your printer and remove all files from it (back them up first if you want, but they are available at Sovol's website).  Place [continuous.bin](continuous.bin) on the SD card, plug into the SV06, unplug the SV06's usb port (if connected), and restart the machine using the physical switch.  If the blank screen doesn't disappear, rename the file on the SD card to anything the printer hasn't seen before and repeat the process until the Sovol logo appears.  The display should now read `Sovol SC 1.x Ready` to indicate it's now a Sovol Continuous!  Running a Y home when the bed is all the way back will now trigger a collision-safe homing ram that will stop and retry if it detects a hard collision.
 
 ## In conjunction with G-Code
 
-See (Continuous print farm DIY)[TODO] for how this firmware mod should be used with smart G-code for best effect.  If you use the suggested G-code scripting, you get the following smart pre and post print behavior:
+See [Continuous print farm DIY TODO](TODO) for how this firmware mod should be used with smart G-code for best effect.  If you use the suggested G-code scripting, you get the following smart pre and post print behavior:
 
 ### Pre-print
 
@@ -32,7 +32,7 @@ See (Continuous print farm DIY)[TODO] for how this firmware mod should be used w
 
 1. Wait for bed to cool to 35C (95F)
 2. Wait anywhere from 15 to 60 minutes depending on first layer print surface area (larger prints stick to plate longer)
-3. TODO
+3. TODO-describe more
 
 # (ORIGINAL README)
 
