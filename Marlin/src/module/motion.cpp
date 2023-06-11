@@ -1537,7 +1537,7 @@ void prepare_line_to_destination() {
     const bool is_home_dir = (axis_home_dir > 0) == (distance > 0);
 
     // Super special Y coord == Y_MAX_POS means to check for collisions!
-    bool is_ram_mode = axis == Y_AXIS && orig_y >= (Y_MAX_POS - 0.99) && is_home_dir;
+    bool is_ram_mode = axis == Y_AXIS && orig_y >= (Y_MAX_POS - 0.99) && is_home_dir && !final_approach;
 
     #if ENABLED(SENSORLESS_HOMING)
       sensorless_t stealth_states;
@@ -1591,22 +1591,17 @@ void prepare_line_to_destination() {
       // based on movement duration since bumped distances aren't really reliable
       uint32 end_move_time = millis();
       uint32 move_duration_ms = end_move_time - start_move_time;
-      float expected_move_ms = 1000 * (Y_MAX_POS / home_fr_mm_s) + 350; // +350 compensates for accel/decel
+      float expected_move_ms = 1000 * (Y_MAX_POS / home_fr_mm_s) + 300; // +300 compensates for accel/decel
       float percent_traveled = (move_duration_ms+0.0) / expected_move_ms;
-
-      if (percent_traveled > 1.15) {
-          char msg[64];
-          sprintf(msg, "Ram took %.1f%% too long!", percent_traveled*100);
-          kill(msg, "", true);
-      }
-      // If traveled much less time than expected to re-home, must have hit something a ram failed to clear!
-      else if (percent_traveled < 0.93) {
+      
+      // If travel is too low, must have hit something a ram failed to clear!
+      if (percent_traveled < 0.93 || percent_traveled > 1.15) {
         // Disable stall guard mode for repeating later
         TERN_(SENSORLESS_HOMING, end_sensorless_homing_per_axis(axis, stealth_states));
 
         // Artificially set current position with calculated current position, but
-        // assume there may be up to 5% error in timing so error on overly smashing Y back to Y_MAX_POS
-        current_position[axis] = Y_MAX_POS - Y_MAX_POS * min(1.0f, (min(percent_traveled, 1.0f) + 0.05f));
+        // assume there may be up to 3% error in timing so error on overly smashing Y back to Y_MAX_POS
+        current_position[axis] = Y_MAX_POS - Y_MAX_POS * min(1.0f, (min(percent_traveled, 1.0f) + 0.03f));
         cartes[axis] = current_position[axis];
         sync_plan_position();
 
@@ -1628,7 +1623,7 @@ void prepare_line_to_destination() {
 
         if (maxRetries <= 0) {
           char msg[64];
-          sprintf(msg, "Ram jam at %.2f%%!", percent_traveled*100);
+          sprintf(msg, "Ram jammed at %.2f%%!", percent_traveled*100);
           kill(msg, "", true);
         }
 
@@ -1645,6 +1640,12 @@ void prepare_line_to_destination() {
         do_homing_move(axis, distance, fr_mm_s, final_approach, maxRetries-1);
         return;
       }
+      // Re-enable to help diagnose good timing constants
+      /*else {
+          char msg[64];
+          sprintf(msg, "Rammed %.2f%%! %i", percent_traveled*100, (int32)maxRetries);
+          kill(msg, "", true);
+      }*/
     }
 
     if (is_home_dir) {
