@@ -146,6 +146,9 @@ int16_t feedrate_percentage = 100;
 // Cartesian conversion result goes here:
 xyz_pos_t cartes;
 
+
+uint32 last_ram_success_ms = millis();
+
 #if IS_KINEMATIC
 
   abce_pos_t delta;
@@ -1518,6 +1521,7 @@ void prepare_line_to_destination() {
     DEBUG_SECTION(log_move, "do_homing_move", DEBUGGING(LEVELING));
 
     uint32 start_move_time = millis();
+    float ms_since_last_ram_success = millis() - last_ram_success_ms;
 
     const feedRate_t home_fr_mm_s = fr_mm_s ?: homing_feedrate(axis);
     float orig_y = current_position[axis];
@@ -1537,7 +1541,7 @@ void prepare_line_to_destination() {
     const bool is_home_dir = (axis_home_dir > 0) == (distance > 0);
 
     // Super special Y coord == Y_MAX_POS means to check for collisions!
-    bool is_ram_mode = axis == Y_AXIS && orig_y >= (Y_MAX_POS - 0.99) && is_home_dir && !final_approach;
+    bool is_ram_mode = axis == Y_AXIS && orig_y >= (Y_MAX_POS - 0.99) && is_home_dir;
 
     #if ENABLED(SENSORLESS_HOMING)
       sensorless_t stealth_states;
@@ -1591,11 +1595,12 @@ void prepare_line_to_destination() {
       // based on movement duration since bumped distances aren't really reliable
       uint32 end_move_time = millis();
       uint32 move_duration_ms = end_move_time - start_move_time;
-      float expected_move_ms = 1000 * (Y_MAX_POS / home_fr_mm_s) + 300; // +300 compensates for accel/decel
+      float expected_move_ms = 1000 * (Y_MAX_POS / home_fr_mm_s) + 500; // +500ms compensates for accel/decel
       float percent_traveled = (move_duration_ms+0.0) / expected_move_ms;
       
       // If travel is too low, must have hit something a ram failed to clear!
-      if (percent_traveled < 0.93 || percent_traveled > 1.15) {
+      // If expected_move_ms is small, it's a double-bump that can be ignored
+      if ((percent_traveled < 0.93 || percent_traveled > 1.15) && ms_since_last_ram_success > 700) {
         // Disable stall guard mode for repeating later
         TERN_(SENSORLESS_HOMING, end_sensorless_homing_per_axis(axis, stealth_states));
 
@@ -1618,7 +1623,7 @@ void prepare_line_to_destination() {
         // For some reason the sync above isn't enough, hard-set the current Y position
         // to max
         current_position[axis] = Y_MAX_POS;
-        cartes[axis] = current_position[axis];
+        //cartes[axis] = current_position[axis];
         sync_plan_position();
 
         if (maxRetries <= 0) {
@@ -1628,11 +1633,11 @@ void prepare_line_to_destination() {
         }
 
         // Wait 15 minutes before trying again! Maybe a cooler bed on the part will free it?
-        const uint32 delay = 1000 * 60 * 15;
+        const uint32 DELAY_BETWEEN_RAMS_MS = 1000 * 60 * 15;
         uint32 now = millis();
         planner.synchronize();
-        uint32 t = millis();
-        while ((t - now) < delay) {
+        uint32 t = now;
+        while ((t - now) < DELAY_BETWEEN_RAMS_MS) {
           t = millis();
           idle(true);
         }
@@ -1640,12 +1645,14 @@ void prepare_line_to_destination() {
         do_homing_move(axis, distance, fr_mm_s, final_approach, maxRetries-1);
         return;
       }
-      // Re-enable to help diagnose good timing constants
-      /*else {
-          char msg[64];
+      else {
+          // Track last ram success time to fix weird edge case
+          last_ram_success_ms = millis();
+          // Re-enable to help diagnose good timing constants
+          /*char msg[64];
           sprintf(msg, "Rammed %.2f%%! %i", percent_traveled*100, (int32)maxRetries);
-          kill(msg, "", true);
-      }*/
+          kill(msg, "", true);*/
+      }
     }
 
     if (is_home_dir) {
